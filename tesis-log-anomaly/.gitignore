@@ -1,0 +1,13 @@
+logs/
+datasets/raw/
+datasets/processed/
+models/
+__pycache__/
+*.pyc
+*.pkl
+*.joblib
+.ipynb_checkpoints/
+.env
+es_data/
+*.tar.gz
+*.zip

@@ -1,0 +1,60 @@
+filebeat.inputs:
+
+  - type: filestream
+    id: nginx-access
+    paths:
+      - /logs/nginx/access.log
+    fields:
+      source_type: nginx
+      log_type: access
+    fields_under_root: true
+    parsers:
+      - ndjson:
+          overwrite_keys: false
+          add_error_key: false
+
+  - type: filestream
+    id: nginx-error
+    paths:
+      - /logs/nginx/error.log
+    fields:
+      source_type: nginx
+      log_type: error
+    fields_under_root: true
+
+  - type: filestream
+    id: app-logs
+    paths:
+      - /logs/app/*.log
+    fields:
+      source_type: app
+      log_type: application
+    fields_under_root: true
+    parsers:
+      - ndjson:
+          target: ""
+          overwrite_keys: true
+          add_error_key: false
+
+processors:
+  - add_host_metadata: ~
+  - timestamp:
+      field: timestamp
+      layouts:
+        - '2006-01-02T15:04:05.000000Z'
+        - '2006-01-02T15:04:05Z'
+      test:
+        - '2026-05-06T23:00:00Z'
+      ignore_missing: true
+      ignore_failure: true
+
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  index: "logs-%{+yyyy.MM.dd}"
+
+setup.ilm.enabled: false
+setup.template.name: "logs"
+setup.template.pattern: "logs-*"
+setup.template.enabled: false
+
+logging.level: warning
