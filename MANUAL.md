@@ -17,7 +17,8 @@
 6. [Cómo correr el sistema desde cero](#6-cómo-correr-el-sistema-desde-cero)
 7. [Cómo probar cada componente](#7-cómo-probar-cada-componente)
 8. [Resultados obtenidos](#8-resultados-obtenidos)
-9. [Glosario técnico](#9-glosario-técnico)
+9. [Validación con dataset académico (HDFS)](#9-validación-con-dataset-académico-hdfs)
+10. [Glosario técnico](#10-glosario-técnico)
 
 ---
 
@@ -138,23 +139,35 @@ tesis-log-anomaly/
 ├── notebooks/
 │   ├── 01_exploration.ipynb        ← análisis exploratorio del dataset (EDA)
 │   ├── 02_feature_engineering.ipynb ← construcción y preparación de features
-│   └── 03_models.ipynb             ← entrenamiento y evaluación de modelos ML
+│   ├── 03_models.ipynb             ← entrenamiento y evaluación de modelos ML
+│   └── 04_hdfs_validation.ipynb    ← validación con dataset académico (HDFS)
 │
 ├── datasets/
-│   ├── raw/                        ← datasets académicos (HDFS, BGL) — sin procesar
+│   ├── raw/
+│   │   └── hdfs/                   ← HDFS_v1 (loghub/Zenodo) — ver sección 9
+│   │       ├── HDFS_v1.zip         ← archivo original descargado (186.6 MB)
+│   │       ├── anomaly_label.csv   ← label real por bloque (BlockId → Normal/Anomaly)
+│   │       ├── Event_occurrence_matrix.csv ← features: conteo de 29 eventos por bloque
+│   │       └── HDFS.log_templates.csv ← plantillas de eventos (E1...E29)
 │   └── processed/
 │       ├── logs.csv                ← dataset completo exportado de ES (22.844 filas)
 │       ├── features.csv            ← dataset preparado para ML (18 features + label)
-│       ├── model_comparison.csv    ← tabla de métricas comparativas
-│       └── contamination_sensitivity.csv ← métricas de Isolation Forest variando contamination
+│       ├── model_comparison.csv    ← tabla de métricas comparativas (dataset propio)
+│       ├── contamination_sensitivity.csv ← métricas de Isolation Forest variando contamination
+│       ├── model_comparison_hdfs.csv ← tabla de métricas sobre HDFS
+│       └── comparison_own_vs_hdfs.csv ← F1 lado a lado, dataset propio vs. HDFS
 │
 ├── models/
-│   ├── isolation_forest.pkl        ← modelo Isolation Forest entrenado
-│   ├── kmeans.pkl                  ← modelo K-Means entrenado
-│   └── dbscan.pkl                  ← modelo DBSCAN entrenado
+│   ├── isolation_forest.pkl        ← modelo Isolation Forest (dataset propio)
+│   ├── kmeans.pkl                  ← modelo K-Means (dataset propio)
+│   ├── dbscan.pkl                  ← modelo DBSCAN (dataset propio)
+│   ├── scaler_hdfs.pkl             ← StandardScaler ajustado sobre HDFS
+│   ├── isolation_forest_hdfs.pkl   ← modelo Isolation Forest (HDFS)
+│   ├── kmeans_hdfs.pkl             ← modelo K-Means (HDFS)
+│   └── dbscan_hdfs.pkl             ← modelo DBSCAN (HDFS, ajustado sobre patrones únicos)
 │
 └── docs/
-    └── figures/                    ← 17 gráficos generados por los notebooks
+    └── figures/                    ← gráficos generados por los notebooks
         ├── label_distribution.png  ← distribución normal vs anomalía
         ├── events_over_time.png    ← línea de tiempo de eventos
         ├── response_time.png       ← distribución de tiempos de respuesta
@@ -170,7 +183,11 @@ tesis-log-anomaly/
         ├── dbscan_kdistance.png    ← gráfico k-distance para elegir eps
         ├── confusion_matrices.png  ← matrices de confusión (IF y K-Means)
         ├── model_comparison_pca.png ← los 3 modelos en espacio PCA
-        └── metrics_comparison.png  ← barras comparativas de métricas
+        ├── metrics_comparison.png  ← barras comparativas de métricas
+        ├── hdfs_isolation_forest.png ← confusion matrix + ROC de IF sobre HDFS
+        ├── kmeans_elbow_hdfs.png   ← método del codo, HDFS
+        ├── dbscan_kdistance_hdfs.png ← k-distance graph, HDFS
+        └── comparison_own_vs_hdfs.png ← F1 comparado: dataset propio vs. HDFS
 ```
 
 ---
@@ -542,13 +559,46 @@ EOF
 - Opera completamente sin etiquetas durante el entrenamiento — a diferencia del `contamination=0.27` usado en versiones anteriores, que sí consultaba el label real.
 - El análisis de sensibilidad muestra el trade-off del umbral explícitamente: con `contamination=0.05` prioriza precisión (0.823) sobre cobertura (recall 0.153); subir `contamination` sube el recall pero también las falsas alarmas.
 
-**K-Means** obtuvo el mejor F1 (0.860) y, con `contamination` corregido, es el modelo con mejor desempeño global del trabajo. La explicación es directa: con k=2 el algoritmo aprende dos "modos" del sistema, y funciona bien porque las anomalías generadas tienen características numéricas muy distintas (códigos 401/500, tiempos de respuesta altos) que forman un cluster compacto y separado — a diferencia de Isolation Forest, no depende de asumir una tasa de contaminación. Su limitación es que necesita conocer k de antemano y es sensible a la inicialización.
+**K-Means** obtuvo el mejor F1 en este dataset (0.860). La explicación es directa: con k=2 el algoritmo aprende dos "modos" del sistema, y funciona bien porque las anomalías generadas tienen características numéricas muy distintas (códigos 401/500, tiempos de respuesta altos) que forman un cluster compacto y separado — a diferencia de Isolation Forest, no depende de asumir una tasa de contaminación. Su limitación es que necesita conocer k de antemano y es sensible a la inicialización. **Importante:** este buen resultado no se sostiene sobre datos independientes — ver sección 9.
 
 **DBSCAN** obtuvo F1=0.051, lo cual es un **hallazgo negativo con valor académico**: los ataques volumétricos (DDoS, brute force) forman grupos densos en el espacio de features y no son "puntos de ruido", que es exactamente lo que DBSCAN busca. Esto demuestra que la elección del algoritmo debe considerar la naturaleza de la anomalía que se quiere detectar.
 
 ---
 
-## 9. Glosario técnico
+## 9. Validación con dataset académico (HDFS)
+
+### Por qué
+
+Todos los resultados de la sección anterior salen de un dataset generado por `log_generator.py` — el mismo autor que diseñó los escenarios de ataque también entrenó y evaluó los modelos sobre ellos. Para descartar que el pipeline solo funciona porque "sabe" reconocer sus propios patrones sintéticos, se corrieron los mismos tres algoritmos, con los mismos criterios de configuración, sobre **HDFS_v1**: un dataset académico independiente, con revisión por pares, ampliamente usado como benchmark de referencia desde 2009.
+
+### Fuente de los datos
+
+- W. Xu, L. Huang, A. Fox, D. Patterson, M. I. Jordan, "Detecting Large-Scale System Problems by Mining Console Logs," *Proc. ACM SIGOPS 22nd Symp. on Operating Systems Principles (SOSP)*, 2009. — generadores y etiquetadores originales del dataset.
+- J. Zhu, S. He, P. He, J. Liu, M. R. Lyu, "Loghub: A Large Collection of System Log Datasets for AI-driven Log Analytics," *IEEE Int. Symp. on Software Reliability Engineering (ISSRE)*, 2023. — curación y redistribución (Zenodo, record 8196385, `HDFS_v1.zip`, 186.6 MB).
+
+575.061 bloques, 16.838 anómalos (**2.93%**) — proporción idéntica a la reportada por Xu et al. desde 2009, lo que confirma que es el dataset estándar sin alteraciones. Se usó `Event_occurrence_matrix.csv`, ya preprocesado por los autores del dataset (conteo de 29 tipos de evento por bloque): no requirió parsing propio con Drain3. Notebook: `notebooks/04_hdfs_validation.ipynb`.
+
+### Resultado: el ranking entre algoritmos se invierte
+
+| Algoritmo | F1 — dataset propio | F1 — HDFS (académico) |
+|---|---|---|
+| Isolation Forest | 0.258 | **0.662** (ROC-AUC 0.958) |
+| K-Means (k=2) | **0.860** | 0.315 |
+| DBSCAN | 0.051 | 0.057 |
+
+En el dataset propio, K-Means ganaba con margen amplio. En HDFS —datos que el autor no diseñó— es el que peor generaliza (F1 cae de 0.860 a 0.315), mientras que Isolation Forest pasa a ser claramente el mejor del trabajo (F1=0.662, ROC-AUC=0.958). La lectura más honesta: el buen resultado de K-Means en el dataset propio dependía en parte de la separabilidad artificial de las anomalías simuladas por `log_generator.py` (clusters compactos y muy distintos del tráfico normal, por construcción) — una condición que no se repite en datos reales. Isolation Forest no asume estructura de clusters y generaliza mejor.
+
+**DBSCAN falla en los dos datasets, pero por razones estructuralmente distintas** — evidencia de que la limitación es más fundamental que un mal ajuste de `eps`:
+- Dataset propio: los ataques (DDoS, brute force) forman sus propios clusters densos, y DBSCAN los confunde con tráfico normal.
+- HDFS: el 99.9% de los bloques (574.466 de 575.061) colapsan en solo **589 patrones únicos** de conteo de eventos — un solo patrón es compartido por 300.395 bloques, más de la mitad del dataset. Con `min_samples=5`, la mayoría de esos patrones (mediana: 3 bloques) no llega al umbral y termina como "ruido": recall=1.00 pero precision=0.03, es decir, casi todo el dataset queda marcado como anómalo. (Nota técnica: correr DBSCAN sobre las 575.061 filas sin deduplicar requiere más de 70GB de RAM — el notebook clusteriza los 589 patrones únicos y propaga la asignación, resultado matemáticamente idéntico.)
+
+### Conclusión
+
+El pipeline generaliza a un dataset académico independiente sin ningún ajuste de configuración. Eso responde la pregunta de validación. Pero el hallazgo más valioso no es que "funcione" — es que el algoritmo ganador cambia según el dataset, lo cual cuestiona directamente la conclusión de la sección 8 y es, en sí mismo, el resultado más honesto y defendible de todo el trabajo.
+
+---
+
+## 10. Glosario técnico
 
 | Término | Definición simple |
 |---|---|
